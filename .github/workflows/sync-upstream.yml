@@ -1,0 +1,33 @@
+name: sync-upstream
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Sync pstack from cursor/plugins
+        run: bash scripts/sync-upstream.sh
+      - name: Push if changed
+        run: |
+          if git status --porcelain | grep -q .; then
+            echo "unexpected uncommitted changes"
+            git status --porcelain
+            exit 1
+          fi
+          LOCAL_SHA=$(git rev-parse HEAD)
+          REMOTE_SHA=$(git ls-remote origin HEAD | cut -f1)
+          if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+            git push origin HEAD:main
+          else
+            echo "Already up to date."
+          fi

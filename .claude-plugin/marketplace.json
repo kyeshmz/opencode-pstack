@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "pstack-mirror",
+  "version": "1.0.0",
+  "description": "Mirror of cursor/plugins pstack, installable in Claude Code. Upstream: https://github.com/cursor/plugins/tree/main/pstack",
+  "owner": {
+    "name": "kyeshmz"
+  },
+  "plugins": [
+    {
+      "name": "pstack",
+      "description": "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence.",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}
