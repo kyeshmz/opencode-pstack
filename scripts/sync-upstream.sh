@@ -27,6 +27,7 @@ rsync -a --delete \
   --exclude='.git/' \
   --exclude='.github/' \
   --exclude='scripts/' \
+  --exclude='opencode/' \
   --exclude='.claude-plugin/' \
   --exclude='install.sh' \
   --exclude='INSTALL.md' \
