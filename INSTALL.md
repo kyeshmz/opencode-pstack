@@ -43,9 +43,21 @@ claude plugin install pstack
 
 ### OpenCode
 
-OpenCode loads Agent Skills from `~/.config/opencode/skills/` (global) and turns
-each into a slash command. `install.sh --opencode` copies normalized skills there,
-installs agents to `~/.config/opencode/agents/pstack/`, and wires the sol model:
+OpenCode loads Agent Skills from `~/.config/opencode/skills/` (global) on
+demand via the `skill` tool, and slash commands from
+`~/.config/opencode/commands/` (`<name>.md` -> `/<name>` in the TUI). Skills
+do NOT automatically become slash commands, so `install.sh --opencode` does
+both: it copies normalized skills to `skills/` (plus forward-compat
+`metadata: opencode/slash: "true"` for builds that honor it), and generates
+one thin `commands/<skill>.md` wrapper per skill that loads it via the
+`skill` tool and forwards `$ARGUMENTS`. Generated wrappers carry a marker
+comment; reinstalls only touch marked files, never your own custom commands,
+and prune marked wrappers whose skill is gone. The verify-skill pair gets its
+authored output paths rewritten from `.cursor/skills/verify-...` to
+`.opencode/skills/verify-...` in the installed copies. Agents install flat to
+`~/.config/opencode/agents/` (`poteto-agent.md` -> `@poteto-agent`), and the
+sol model mapping works as below. Then restart the TUI (or `opencode reload`
+plus a new session) and run `/setup-pstack`, then `/poteto-mode`.
 
 - `opencode/pstack-models.md` pins every pstack role to `openai/gpt-5.6-sol`
   (same shape as the `/setup-pstack` rule, so skill bodies resolve verbatim).
@@ -59,7 +71,12 @@ Then run `/setup-pstack`, then `/poteto-mode`.
 
 - `.claude-plugin/` — Claude Code plugin + marketplace manifests
 - `opencode/` — OpenCode overlays (sol model role mapping)
-- `scripts/sync-upstream.sh` — sync script
+- `scripts/sync-upstream.sh` — sync script (holds the overlay rsync excludes)
+- `scripts/opencode-transform.py` — Cursor-to-OpenCode rewrite rules, run by
+  `install.sh --opencode` on the installed copies; each rule asserts its hit
+  count so upstream rewordings fail loudly
+- `agents/opencode-port-agent.md` — the agent that owns this port; has its own
+  rsync exclude because `agents/` is otherwise upstream-owned
 - `.github/workflows/sync-upstream.yml` — auto-sync workflow
 - `install.sh`, `INSTALL.md`, `.upstream-sha`
 

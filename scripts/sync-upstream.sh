@@ -32,6 +32,7 @@ rsync -a --delete \
   --exclude='install.sh' \
   --exclude='INSTALL.md' \
   --exclude='.upstream-sha' \
+  --exclude='agents/opencode-port-agent.md' \
   "$SRC/" "$ROOT/"
 
 echo "$UPSTREAM_SHA" > "$ROOT/.upstream-sha"
