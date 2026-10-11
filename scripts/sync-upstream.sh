@@ -32,6 +32,7 @@ rsync -a --delete \
   --exclude='install.sh' \
   --exclude='bootstrap.sh' \
   --exclude='INSTALL.md' \
+  --exclude='README.md' \
   --exclude='AGENTS.md' \
   --exclude='.upstream-sha' \
   --exclude='agents/opencode-port-agent.md' \

@@ -1,5 +1,10 @@
 # pstack
 
+> **OpenCode port:** this repository installs pstack skills, agents, and commands
+> for OpenCode. See [INSTALL.md](./INSTALL.md) for paths, backups, and platform
+> differences. The upstream introduction and workflow examples below describe
+> Cursor; the installer converts the installed copies for OpenCode.
+
 i'm [poteto](https://x.com/poteto). i'm not a president or ceo, but i've worked with millions of lines of code at Meta, Netflix, and Cursor. i'm also on the react core team where i help build and maintain react compiler.
 
 there's a growing sense that ai writes too much slop code. i agree. i don't want to ship like a team of twenty slop artists. throughput without quality is not a goal i aspire to. if you want to go fast, go deep first. 
@@ -14,9 +19,23 @@ fork it. improve it. make it yours. PRs are welcome!
 
 ## install
 
+### OpenCode: install or update in one line
+
 ```bash
-/add-plugin pstack
+curl -fsSL https://raw.githubusercontent.com/kyeshmz/opencode-pstack/main/bootstrap.sh | bash
 ```
+
+Run it on each machine where you use OpenCode. It installs globally into
+`${XDG_CONFIG_HOME:-$HOME/.config}/opencode`, backs up replaced pack files,
+and preserves existing model choices, custom commands, and unrelated settings.
+Git, Python 3, and Bash are required. Run the same command to update.
+
+Start a new OpenCode session after installation, then run `/setup-pstack` to
+choose models and `/poteto-mode` to begin a task. Generated project skills go
+in the target repository's `.opencode/skills/` directory, not the global pack.
+
+For a local checkout, use `./install.sh`. Explicit Claude Code and Cursor
+compatibility targets are documented in [INSTALL.md](./INSTALL.md).
 
 ## get started
 

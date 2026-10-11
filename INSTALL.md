@@ -112,7 +112,7 @@ only the OpenCode copies receive the OpenCode conversion.
 `scripts/sync-upstream.sh` copies upstream pstack into this checkout and commits
 changes. The last upstream revision is in `.upstream-sha`.
 
-The sync preserves `AGENTS.md`, `INSTALL.md`, `install.sh`, `bootstrap.sh`, `opencode/`, `scripts/`,
+The sync preserves `AGENTS.md`, `README.md`, `INSTALL.md`, `install.sh`, `bootstrap.sh`, `opencode/`, `scripts/`,
 `.github/`, `.claude-plugin/`, and `.upstream-sha`. Conversion rules assert their
 expected match counts so upstream rewordings fail visibly instead of leaving
 partially converted instructions.
