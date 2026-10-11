@@ -132,21 +132,25 @@ Tests use temporary home/config directories and do not alter your live setup.
 for selectively tracking the Cursor `plugins` repository's `pstack/` source.
 The policy gives one selection the pstack skill, agent, guide, and README
 Markdown context plus the two text scripts used by existing transformations.
-Its edit allowlist covers reviewed OpenCode-specific installer, conversion,
-skill, and guide overlays. It keeps upstream workflows, rationale, principles,
-and acceptance intent intact; only verified OpenCode V2 host mechanics may differ.
+Its edit allowlist covers `install.sh`, `scripts/install-opencode.py`,
+`scripts/opencode-transform.py`, `opencode/skills/**`, `opencode/docs/**`,
+`INSTALL.md`, and this port-agent file. The source `pstack/README.md` remains
+watched context; this repository's root `README.md` is a protected existing
+OpenCode overlay. The policy preserves upstream workflows, rationale,
+principles, and acceptance intent while using native OpenCode replacements.
 
 The local CLI policy and `.oc-port/state.json` checkpoint are separate from
 `.upstream-sha`, which remains raw-mirror provenance and does not prove
 semantic parity. `opencode/porting/policy.json` is the hosted policy form and
 does not contain executable or model settings. `registration.template.json`
-is review material only. The recorded GitHub App installation ID is not proof
-that access to this repository is enabled, and creating these files does not
-activate a hosted registration. The hosted service also has no initial
-`--full` adoption mode. Do not claim unattended synchronization is active.
+is review material only. GitHub access for installation `170044765` is
+currently verified, but its selection is **all repositories**, not only this
+target. Creating these files does not activate a tracking registration or
+deploy the backend. The hosted service also has no initial `--full` adoption
+mode. Do not claim unattended synchronization is active.
 
 Run `python3 scripts/verify-opencode-port.py` for a manual isolated install
-check. Pinned plan verification uses
+check. The full test suite also includes native installer tests. Pinned plan verification uses
 `python3 scripts/verify-opencode-port.py --require-plan`; it blocks if selected
 source changes are newer than the mirrored `.upstream-sha`. Both modes create
 a fresh temporary `HOME` and `XDG_CONFIG_HOME` and do not read global sessions

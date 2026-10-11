@@ -1,10 +1,81 @@
 # Phase 2 independent review
 
-Reviewed and repair-rechecked on 2026-10-10 by GPT-6.1 Sol. **Disposition: R1–R4 resolved; approved for the planner to publish a draft configuration PR within the measured scope.** No outstanding blocker was found in this targeted recheck. This approval does not authorize merge, model inference, App activation, or hosted deployment, and does not certify full pstack semantic parity.
+Reviewed, repair-rechecked, and concurrent-main-reconciled on 2026-10-10 by GPT-6.1 Sol. **Disposition: no blocking finding in the reconciliation onto `origin/main` at `30a3cbd1cbf83159e56d83790fc43b4493eb5fc6`; approved for the planner to publish a draft configuration PR within the current measured scope.** Prior R1–R4 closures remain intact. This approval does not authorize merge, model inference, App activation, or hosted deployment, and does not certify full pstack semantic parity.
 
 Implementation was read-only. No commit, remote write, App action, deployment, Docker run, model inference, global install, checkpoint update, or credential inspection was performed. Reproductions used disposable copies and controlled environments; launcher privilege calls were mocked, not executed.
 
-## Targeted repair recheck
+## Current-base concurrent-main reconciliation review
+
+This section supersedes earlier-base counts, installer assumptions, policy hashes, and scope statements below. Current `AGENTS.md` and incoming user changes are authoritative. Implementation/state/incoming files remained read-only during this review; only this report and the permitted plan log were updated. No broader App/core/provider audit or live permission request was performed.
+
+### Preservation and current scope
+
+- Offline byte/mode audit confirms **180 incoming `origin/main` files unchanged** outside the three deliberately modified port overlays (`INSTALL.md`, `agents/opencode-port-agent.md`, and `scripts/sync-upstream.sh`). This includes incoming `install.sh`, `scripts/install-opencode.py`, conversion rules, `bootstrap.sh`, `AGENTS.md`, root `README.md`, model template, native skill/guide overlays, and `scripts/tests/test_opencode_install.py`. The entire incoming `INSTALL.md` is preserved verbatim as the current file's prefix; policy documentation is additive.
+- The current diff against `origin/main` contains **15 paths**, all port-owned configuration/state/schema/report/verifier/new-test or the three declared overlay modifications. There is no incoming installer/native-overlay/test/model/source deletion or rewrite in this branch delta. The plan's earlier reconciliation log stated 16; 15 is the independently observed current count.
+- Exactly **163 remaining Cursor source files/content/modes** match `ccb5507cec1546dc88135c1139c811e6c59115ba:pstack`. Root `README.md` is the intentional pre-existing user-owned overlay, not a failed raw-source comparison; it remains unchanged from incoming main. It is protected by policy and preserved by sync.
+- The selection retains the correct `pstack/` source prefix and Cursor rationale/acceptance intent. Its seven target entries cover the real entry point, staged Python installer, strict transform, native skill/guide trees, INSTALL guidance, and repository port-agent guidance. Raw source, root README/AGENTS/bootstrap, model defaults, incoming tests, policy/schema/verifier/checkpoint, and workflows remain outside model edit permission. Native overlays are eligible adaptation paths for future selected port proposals but are unchanged by this reconciliation.
+- Fresh pstack model defaults are now **`inherit-parent`**, not Sol-pinned defaults. The runner's `opencode/gpt-6-luna` choice is independent of those roles. Current policy/port documentation preserves confirmed user choices, omits guessed model aliases, retains explicit Claude/Cursor compatibility flags, and identifies unsupported platform semantics as blocked rather than granted privileges.
+
+### Current installer/verifier evidence
+
+All required commands ran with fresh controlled HOME/XDG and sanitized parent environments, including the complete incoming test suite:
+
+```text
+$ bash -n install.sh scripts/sync-upstream.sh bootstrap.sh
+[exit 0; no output]
+
+$ python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+.............................
+Ran 29 tests in 8.578s
+OK
+
+$ python3 scripts/verify-opencode-port.py
+verified isolated OpenCode install twice: 51 skills, 2 flat agents,
+50 generated wrappers; 189 protected source/overlay hashes unchanged;
+un-pinned manual baseline
+
+$ git diff --check
+[exit 0; no output]
+
+$ git diff origin/main --name-only
+[exit 0; 15 port-owned delta paths, audited as described above]
+```
+
+The two actual installs use a nondefault XDG path containing a space. They verify native manual-only frontmatter without speculative metadata, marked wrappers/custom-command collision and stale-wrapper cleanup, user-selected role bytes, managed AGENTS guidance/preimage/backup, unrelated skill/agent sentinels, byte-preserved JSON/JSONC, native skill replacements and exact guide-overlay copies, strict conversion failures before publication, and repeated-install idempotency. Default OpenCode installation produces no `.cursor` or fallback `.config` tree. Only `poteto-agent` and `comment-sicko` are installed globally as subagents; the repository's port-agent file is intentionally excluded and is not counted as an installed third agent. Incoming tests exercise explicit compatibility, resource/guide links, fallback XDG behavior, staged failure, and backups without changing their source.
+
+### Actual policy/checkpoint and both plan interfaces
+
+Actual original-tool `loadConfig`, `parseState`, `policyHash`, hosted `parsePolicy`, registration projection, and Ajv Draft 2020-12 validation accepted the current policy. Local schemas remain exact original-tool copies. The current normalized policy hash is:
+
+```text
+54a24fc368ab6359852544853451e4af50a18d3d10c7806bf85cd2ef018561f6
+```
+
+`lastSyncedCommit` and `.upstream-sha` remain at ccb, not latest upstream HEAD. Runtime progression still checks source/policy identity and CLI `plan.from`; malformed/conflicting packets, checkpoint mismatches, and selected-source mirror lag remain covered by the passing suite.
+
+The actual CLI `writePacket()` generated a disposable adopt packet with **122 exact selected ccb files in each snapshot**. Complete plan size was **1,130,603 bytes**, below 2,000,000; future plans remain bounded and are not guaranteed to fit. Both complete configured command chains passed independently:
+
+```text
+CLI packet fixture:
+  bash -n install.sh scripts/sync-upstream.sh bootstrap.sh   exit 0
+  full unittest discovery                                 29 tests, OK
+  verify-opencode-port.py --require-plan                   exit 0
+  51 skills, 2 agents, 50 wrappers, 189 protected hashes; selected=True
+
+Hosted-pin fixture, internal CLI config/state omitted:
+  bash -n install.sh scripts/sync-upstream.sh bootstrap.sh   exit 0
+  full unittest discovery                                 29 tests, OK
+  verify-opencode-port.py --require-plan                   exit 0
+  51 skills, 2 agents, 50 wrappers, 186 protected hashes; selected=True
+```
+
+The hosted fixture's three fewer hashes are the intentionally omitted root CLI config, state, and internal ignore file, not lost raw source. CLI packet SHA-256 remained `20e80e589bfd3a7b1143a800c4208902b6aa3fc0a50de49fa7bc38ff9ab43c19` after its full chain; its state bytes remained unchanged. Current-target ccb state/mirror bytes stayed unchanged throughout, and no packet was written to the current target. Prior launcher-source/digest/child-environment evidence is carried forward from the repair recheck; no broad original-App re-audit was needed or claimed.
+
+### Current publication/activation limits
+
+The configuration is approved for **draft-only** publication on this reconciled base. It is not published by this review. The planner reports fresh read-only App-access evidence for App `5266090` / installation `170044765`, but the grant is **`repository_selection: all`**. Do not describe it as target-only or least-privilege access; scope acceptance/narrowing remains an operator decision before activation, with other access preserved. This review made no App/key/provider/backend call or permission change. Hosted backend/registration, production runtime compatibility, inference, manual approval, and full pstack semantic equivalence remain separate unproved gates.
+
+## Prior-base targeted repair recheck — historical evidence
 
 The bounded repairs were inspected in the live target verifier/tests and the original tool's metadata adapter, launcher source/digest, and sandbox tests. No broader App or architecture audit was performed.
 
@@ -154,9 +225,9 @@ Additional observed evidence:
 - The actual installer strict-hit drift regression fails installation, while normal repeated installation is idempotent and preserves the tested unrelated skill/agent, custom-command collision, user config fields, backup, and model-role instruction copies. The verifier's policy/selection/schema hash pins reject the tested scope and instruction drift. These checks do not prove arbitrary transform changes or skill behavior equivalent.
 - A future source commit with trusted `hasSelections=false` is accepted without advancing or requiring the raw mirror. A selected future source pin against the older mirror is rejected. The result labels selection state rather than claiming old installed files prove selected future-source parity.
 
-## Policy and scope assessment
+## Current policy and scope assessment
 
-The policies point to `cursor/plugins` branch `main` with the correct `pstack/` prefix and one combined selection. The four editable overlay paths are separate from raw source, policy/schema/verifier/checkpoint, workflow, and user model defaults. The CLI runner's model is independent of the preserved pstack role mapping. Hosted policy has no executable/model settings. Registration is explicitly a template, not an activation record.
+The policies point to `cursor/plugins` branch `main` with the correct `pstack/` prefix and one combined selection. The current seven target entries include the staged installer and native skill/guide trees and remain separate from raw source, root README/AGENTS/bootstrap, policy/schema/verifier/checkpoint, tests, workflows, and user model defaults. Fresh role defaults inherit the parent and existing user-selected roles are preserved; the CLI runner's model is independent. Hosted policy has no executable/model settings. Registration is explicitly a template, not an activation record.
 
 Reviewed original CLI packet/agent-definition and hosted prompt construction: structured `goal`, `adaptation`, and `nonGoals` reach the agent as bounded operator intent; preserved/protected scope remains separately enforced. Source instructions are reference data, not permissions. Metadata originates in `RunnerRequest.plan`, not model responses. Existing snapshot, output-observer, and mutation/inventory report boundaries were not changed by the metadata addition.
 
@@ -164,7 +235,7 @@ OpenCode V2 [tools](https://opencode.ai/v2/docs/tools), [skills](https://opencod
 
 ## Nonblocking operational caveats
 
-- No live App repository-access proof, deployed backend, active hosted registration, published tool, or model-run proof was obtained. The template cannot establish any of these.
+- No independent live App call was made by this review. Planner-reported target access is granted through an **all-repositories** installation, not a target-only selection. No deployed backend, active hosted registration, published tool, or model-run proof was obtained here; the template cannot establish any of these.
 - The original tool is local/private. Do not present a public install command or hosted unattended synchronization as usable or active from this configuration alone.
 - Human direction/baseline and real-target installation/activation approval remain pending. Neither manual plan checkbox was changed.
 - Hosted runtime/image and complete target-snapshot compatibility were not exercised with this repository; no Docker or live backend was run. Preserve existing snapshot/probe protections and review deployment readiness separately. The current hosted service has no initial `--full` adoption support.
@@ -172,4 +243,4 @@ OpenCode V2 [tools](https://opencode.ai/v2/docs/tools), [skills](https://opencod
 
 ## Publication handoff
 
-The independent review gate for the draft configuration PR is cleared within the bounded policy/verifier/metadata scope. Planner may proceed with the plan's draft-only publication workflow and report the exact observed checks and limitations. No PR was created by this recheck. Keep raw source, current ccb seed/mirror SHA, schemas/policy, model defaults, and schedules unchanged. Human approval, repository-specific App permission, hosted registration/deployment readiness, live runtime compatibility, and semantic behavior proof remain separate gates; this report establishes none of them.
+The independent review gate for the draft configuration PR is cleared on the reconciled `30a3cbd` base within the bounded current policy/verifier/metadata scope. Planner may proceed with draft-only publication and report the current 29-test/two-agent/189-hash results, not stale prior-base counts. No PR was created by this recheck. Keep incoming user files, the 163 raw source files, current ccb seed/mirror SHA, schemas/policy, model defaults, and schedules unchanged. Human approval, the all-repositories App scope decision, hosted registration/deployment readiness, live runtime compatibility, and semantic behavior proof remain separate gates.

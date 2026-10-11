@@ -72,8 +72,9 @@ def copy_policy_inputs(destination):
     shutil.copytree(ROOT / "opencode/porting", destination / "opencode/porting")
     (destination / "scripts").mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "scripts/sync-upstream.sh", destination / "scripts/sync-upstream.sh")
-    (destination / ".oc-port").mkdir()
-    shutil.copy2(ROOT / ".oc-port/.gitignore", destination / ".oc-port/.gitignore")
+    if (ROOT / ".oc-port/.gitignore").is_file():
+        (destination / ".oc-port").mkdir()
+        shutil.copy2(ROOT / ".oc-port/.gitignore", destination / ".oc-port/.gitignore")
 
 
 class PortPolicyTests(unittest.TestCase):
@@ -303,31 +304,43 @@ class PortPolicyTests(unittest.TestCase):
             self.assertIn("selected=True", result)
 
     def test_mutated_raw_source_is_detected_by_hash_manifest(self):
-        before = {"skills/source.md": ("before", 0o100644), "docs/guide.md": ("same", 0o100644)}
-        after = {"skills/source.md": ("after", 0o100644), "docs/guide.md": ("same", 0o100644)}
-        with self.assertRaisesRegex(verify.VerificationError, "installer changed upstream-owned source hashes"):
+        before = {
+            "skills/source.md": ("before", 0o100644),
+            "docs/guide.md": ("same", 0o100644),
+            "README.md": ("user-owned overlay", 0o100644),
+        }
+        after = {
+            "skills/source.md": ("before", 0o100644),
+            "docs/guide.md": ("same", 0o100644),
+            "README.md": ("overwritten overlay", 0o100644),
+        }
+        with self.assertRaisesRegex(verify.VerificationError, "installer changed protected source/overlay hashes"):
             verify.assert_source_unchanged(before, after)
 
     def test_bad_transform_fails_on_real_installer_strict_hit_assertion(self):
         with tempfile.TemporaryDirectory(prefix="oc-port-bad-transform-") as temporary:
             temporary_root = Path(temporary)
             fixture = temporary_root / "repo"
-            fixture.mkdir()
-            shutil.copy2(ROOT / "install.sh", fixture / "install.sh")
-            (fixture / "scripts").mkdir()
-            shutil.copy2(ROOT / "scripts/opencode-transform.py", fixture / "scripts/opencode-transform.py")
-            shutil.copytree(ROOT / "skills", fixture / "skills")
-            shutil.copytree(ROOT / "agents", fixture / "agents")
-            (fixture / "opencode").mkdir()
-            shutil.copy2(ROOT / "opencode/pstack-models.md", fixture / "opencode/pstack-models.md")
+            shutil.copytree(
+                ROOT,
+                fixture,
+                ignore=lambda _directory, names: {
+                    name for name in names if name in {".git", ".plans", ".oc-port", "node_modules", ".wrangler", "__pycache__"}
+                },
+            )
             source = fixture / "skills/no-comments/SKILL.md"
             text = source.read_text(encoding="utf-8")
             self.assertIn("Spawn `Task` with", text)
             source.write_text(text.replace("Spawn `Task` with", "Spawn the Task with", 1), encoding="utf-8")
             home = temporary_root / "home"
             home.mkdir()
+            existing = home / "xdg config/opencode/skills/no-comments/SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("Existing installed skill must survive a failed conversion.\n", encoding="utf-8")
             with self.assertRaisesRegex(verify.VerificationError, "install.sh --opencode exited"):
                 verify.run_install(fixture, home, temporary_root)
+            self.assertEqual(existing.read_text(encoding="utf-8"), "Existing installed skill must survive a failed conversion.\n")
+            self.assertFalse((home / "xdg config/opencode/skills/poteto-mode").exists())
 
     def test_isolated_generation_preserves_user_state_and_is_idempotent(self):
         before_sources = verify.source_manifest(ROOT)
@@ -335,12 +348,12 @@ class PortPolicyTests(unittest.TestCase):
             temporary_root = Path(temporary)
             home = temporary_root / "home"
             home.mkdir()
-            original_config, config = verify.prepare_isolated_home(home)
+            sentinels = verify.prepare_isolated_home(home)
             first = verify.run_install(ROOT, home, temporary_root)
-            first_tree = verify.tree_manifest(home)
-            counts = verify.verify_installed_output(ROOT, home, original_config, config)
+            first_tree = verify.tree_manifest(sentinels["config_dir"])
+            counts = verify.verify_installed_output(ROOT, home, sentinels)
             second = verify.run_install(ROOT, home, temporary_root)
-            second_tree = verify.tree_manifest(home)
+            second_tree = verify.tree_manifest(sentinels["config_dir"])
             self.assertEqual(first_tree, second_tree)
             self.assertIn("all ", first.stdout)
             self.assertIn("all ", second.stdout)
@@ -348,6 +361,23 @@ class PortPolicyTests(unittest.TestCase):
             self.assertGreater(counts[1], 0)
             self.assertGreater(counts[2], 0)
         verify.assert_source_unchanged(before_sources, verify.source_manifest(ROOT))
+
+    def test_fresh_install_uses_nondefault_xdg_and_inherit_parent_seed(self):
+        with tempfile.TemporaryDirectory(prefix="oc-port-fresh-xdg-") as temporary:
+            temporary_root = Path(temporary)
+            home = temporary_root / "home"
+            home.mkdir()
+            verify.run_install(ROOT, home, temporary_root)
+            config = home / "xdg config/opencode"
+            model_file = config / "instructions/pstack-models.md"
+            self.assertEqual(model_file.read_bytes(), (ROOT / "opencode/pstack-models.md").read_bytes())
+            self.assertIn("inherit-parent", model_file.read_text(encoding="utf-8"))
+            self.assertFalse((home / ".config").exists())
+            self.assertFalse((home / ".cursor").exists())
+            self.assertFalse((config / "opencode.json").exists())
+            agents = (config / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertEqual(agents.count("<!-- pstack:opencode:start -->"), 1)
+            self.assertEqual(agents.count("<!-- pstack:opencode:end -->"), 1)
 
     @unittest.skipUnless(shutil.which("git") and shutil.which("rsync"), "requires Git and real rsync for the local sync fixture")
     def test_sync_uses_real_rsync_and_preserves_policy_checkpoint_with_ci_identity(self):
@@ -396,7 +426,7 @@ class PortPolicyTests(unittest.TestCase):
             }
             sync_result = run(["bash", "scripts/sync-upstream.sh"], cwd=target, env=sync_env)
             self.assertIn("Committed sync", sync_result.stdout)
-            self.assertEqual((target / "README.md").read_text(encoding="utf-8"), "upstream README revision\n")
+            self.assertEqual((target / "README.md").read_text(encoding="utf-8"), "old mirror README\n")
             self.assertEqual((target / "oc-port-agent.json").read_text(encoding="utf-8"), '{"policy":"keep"}\n')
             self.assertEqual((target / ".oc-port/state.json").read_text(encoding="utf-8"), '{"checkpoint":"keep"}\n')
             self.assertEqual((target / ".oc-port/.gitignore").read_text(encoding="utf-8"), "/cache/\n")
