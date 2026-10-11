@@ -125,3 +125,61 @@ bash -n install.sh
 ```
 
 Tests use temporary home/config directories and do not alter your live setup.
+
+## Structured Cursor pstack port policy
+
+`oc-port-agent.json` and `opencode/porting/` are preserved OpenCode overlays
+for selectively tracking the Cursor `plugins` repository's `pstack/` source.
+The policy gives one selection the pstack skill, agent, guide, and README
+Markdown context plus the two text scripts used by existing transformations.
+Its edit allowlist covers `install.sh`, `scripts/install-opencode.py`,
+`scripts/opencode-transform.py`, `opencode/skills/**`, `opencode/docs/**`,
+`INSTALL.md`, and this port-agent file. The source `pstack/README.md` remains
+watched context; this repository's root `README.md` is a protected existing
+OpenCode overlay. The policy preserves upstream workflows, rationale,
+principles, and acceptance intent while using native OpenCode replacements.
+
+The local CLI policy and `.oc-port/state.json` checkpoint are separate from
+`.upstream-sha`, which remains raw-mirror provenance and does not prove
+semantic parity. `opencode/porting/policy.json` is the hosted policy form and
+does not contain executable or model settings. `registration.template.json`
+is review material only. GitHub access for installation `170044765` is
+currently verified, but its selection is **all repositories**, not only this
+target. Creating these files does not activate a tracking registration or
+deploy the backend. The hosted service also has no initial `--full` adoption
+mode. Do not claim unattended synchronization is active.
+
+Run `python3 scripts/verify-opencode-port.py` for a manual isolated install
+check. The full test suite also includes native installer tests. Pinned plan verification uses
+`python3 scripts/verify-opencode-port.py --require-plan`; it blocks if selected
+source changes are newer than the mirrored `.upstream-sha`. Both modes create
+a fresh temporary `HOME` and `XDG_CONFIG_HOME` and do not read global sessions
+or credentials.
+
+## Overlay files (not overwritten by sync)
+
+- `.claude-plugin/` — Claude Code plugin + marketplace manifests
+- `opencode/` — OpenCode overlays and user-owned model role defaults
+- `scripts/sync-upstream.sh` — sync script (holds the overlay rsync excludes)
+- `scripts/opencode-transform.py` — Cursor-to-OpenCode rewrite rules, run by
+  `install.sh --opencode` on the installed copies; each rule asserts its hit
+  count so upstream rewordings fail loudly
+- `agents/opencode-port-agent.md` — the agent that owns this port; has its own
+  rsync exclude because `agents/` is otherwise upstream-owned
+- `.github/workflows/sync-upstream.yml` — auto-sync workflow
+- `oc-port-agent.json`, `opencode/porting/`, and `.oc-port/` — structured port
+  policy, protected schemas, documentation, and separate checkpoint. Local
+  cache/context/result artifacts are ignored; state and reports are retained.
+- `scripts/verify-opencode-port.py` and `scripts/tests/` — isolated installer
+  and policy/sync regression checks
+- `install.sh`, `INSTALL.md`, `.upstream-sha`
+
+The six-hour mirror is still the only scheduled writer. `scripts/sync-upstream.sh`
+excludes `oc-port-agent.json` and `.oc-port/` from rsync deletion. It uses a
+GitHub Actions bot identity only on the individual CI commit invocation; no
+global Git configuration is changed.
+
+The upstream-owned `skills/`, `agents/` (except the port agent), `docs/`,
+`automations/`, `assets/`, `.cursor-plugin/`, `LICENSE`, and `.gitignore` remain
+pristine. `README.md`, `AGENTS.md`, and `bootstrap.sh` are existing
+OpenCode-specific overlays preserved by the current sync script.

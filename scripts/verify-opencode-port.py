@@ -1,0 +1,737 @@
+#!/usr/bin/env python3
+"""Verify the pstack OpenCode overlay without using a user's OpenCode state."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Any, Mapping
+
+
+ROOT = Path(__file__).resolve().parents[1]
+UPSTREAM = {"repository": "https://github.com/cursor/plugins.git", "ref": "main"}
+BASELINE = "ccb5507cec1546dc88135c1139c811e6c59115ba"
+TRACKING_POLICY_HASH = "54a24fc368ab6359852544853451e4af50a18d3d10c7806bf85cd2ef018561f6"
+SELECTION_ID = "pstack-cursor-to-opencode"
+UPSTREAM_PATHS = [
+    "pstack/skills/**/*.md",
+    "pstack/agents/*.md",
+    "pstack/docs/guide/**/*.md",
+    "pstack/README.md",
+    "pstack/skills/poteto-mode/scripts/check-plan.mjs",
+    "pstack/skills/poteto-mode/scripts/worktree-audit.sh",
+]
+EXCLUDED_UPSTREAM_PATHS = [
+    "pstack/skills/**/node_modules/**",
+    "pstack/skills/**/vendor/**",
+    "pstack/skills/**/package-lock.json",
+    "pstack/skills/**/pnpm-lock.yaml",
+    "pstack/skills/**/yarn.lock",
+    "pstack/skills/**/*.png",
+    "pstack/skills/**/*.jpg",
+    "pstack/skills/**/*.jpeg",
+    "pstack/skills/**/*.gif",
+    "pstack/skills/**/*.webp",
+    "pstack/skills/**/*.svg",
+]
+TARGET_PATHS = [
+    "install.sh",
+    "scripts/install-opencode.py",
+    "scripts/opencode-transform.py",
+    "opencode/skills/**",
+    "opencode/docs/**",
+    "INSTALL.md",
+    "agents/opencode-port-agent.md",
+]
+PROTECTED_PATHS = [
+    "skills/**",
+    "docs/**",
+    "automations/**",
+    "assets/**",
+    ".cursor-plugin/**",
+    "agents/poteto-agent.md",
+    "agents/comment-sicko.md",
+    "AGENTS.md",
+    "README.md",
+    "bootstrap.sh",
+    "LICENSE",
+    ".gitignore",
+    ".github/workflows/**",
+    ".upstream-sha",
+    "oc-port-agent.json",
+    ".oc-port/**",
+    "opencode/pstack-models.md",
+    "opencode/porting/**",
+    "scripts/sync-upstream.sh",
+    "scripts/verify-opencode-port.py",
+    "scripts/tests/**",
+]
+PRESERVE = [
+    "Keep Cursor pstack workflows, rationale, principles, and acceptance intent intact while adapting only through native OpenCode overlays and the isolated installer/conversion layers.",
+    "Preserve the 163 upstream-owned files and the pre-existing README.md overlay. .upstream-sha is raw mirror provenance, not proof of semantic port parity.",
+    "Preserve user-owned role choices in instructions/pstack-models.md; fresh defaults inherit the parent. Never guess or pin Cursor-specific model IDs.",
+    "Use ${XDG_CONFIG_HOME:-$HOME/.config}/opencode; do not create ~/.cursor/ on the default OpenCode path or rewrite opencode.json(c). Keep the managed AGENTS block and surrounding user instructions intact.",
+    "Preserve unrelated installed skills, custom commands, agents, existing configuration values, rollback backups, and explicit Claude/Cursor compatibility behavior.",
+    "Treat unsupported Cursor-only UI, cloud-agent, scheduling, and session-context behavior as a blocker for manual review rather than silently dropping semantics.",
+]
+VERIFICATION = [
+    {
+        "command": "bash",
+        "args": ["-n", "install.sh", "scripts/sync-upstream.sh", "bootstrap.sh"],
+        "timeoutSeconds": 60,
+    },
+    {
+        "command": "python3",
+        "args": ["-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_*.py"],
+        "timeoutSeconds": 900,
+    },
+    {
+        "command": "python3",
+        "args": ["scripts/verify-opencode-port.py", "--require-plan"],
+        "timeoutSeconds": 900,
+    },
+]
+CLI_MODEL_SETTINGS = {
+    "model": "opencode/gpt-6-luna",
+    "timeoutSeconds": 300,
+    "maxAttempts": 1,
+    "steps": 30,
+}
+CLI_LIMITS = {"maxCommits": 100, "maxContextBytes": 2_000_000}
+HOSTED_LIMITS = {
+    "maxCommits": 100,
+    "maxChangedPaths": 5000,
+    "maxFiles": 500,
+    "maxContextBytes": 2_000_000,
+    "maxFileBytes": 250_000,
+    "maxResponseBytes": 1_000_000,
+    "maxVerificationOutputBytes": 65_536,
+    "maxJobSeconds": 3600,
+    "maxAttempts": 1,
+    "maxSteps": 30,
+}
+EXPECTED_AGENT_SCHEMA = "./opencode/porting/oc-port-agent.schema.json"
+EXPECTED_POLICY_SCHEMA = "./oc-port-policy.schema.json"
+EXPECTED_SCHEMA_SHA256 = {
+    "oc-port-agent.schema.json": "4304d2c088013df8c074fe801c233b868137ba62a4ff3097d0f7912e078ad066",
+    "oc-port-policy.schema.json": "2e6d42149755ab9abb13405db2b276868242e0cbb5b152a4d81eaf34092ffdbd",
+    "porting-instructions.schema.json": "6e886b8c6c22c49545b65c6952a890bed9dff5160ad61b58b5ad83116f681372",
+}
+EXPECTED_SELECTION_SHA256 = "cf9e8d172052d9076ad9bbd5c87f39bc3724f3545ffba23d327b3122b8070417"
+IGNORE_ENTRIES = {"/cache/", "/context/", "/tmp/", "/result.json", "/agent-output.log"}
+HEX_COMMIT = re.compile(r"^[a-f0-9]{40,64}$")
+SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+MANUAL_ONLY = re.compile(r"^disable-model-invocation:\s*true\s*$", re.MULTILINE)
+MARKER = "<!-- generated by pstack install.sh (do not edit: overwritten on reinstall) -->"
+AGENTS_START = "<!-- pstack:opencode:start -->"
+AGENTS_END = "<!-- pstack:opencode:end -->"
+GUIDE_PREFIX = (
+    "> OpenCode port: use the installed skills and [installation guide](../../README.md) "
+    "for host-specific behavior. Cursor Custom Modes, cloud agents, plugins, "
+    "and automation services described in this upstream guide are not OpenCode features.\n\n"
+)
+RAW_DIRS = ("skills", "docs", "automations", "assets", ".cursor-plugin")
+RAW_FILES = (
+    "agents/poteto-agent.md",
+    "agents/comment-sicko.md",
+    "LICENSE",
+    ".gitignore",
+)
+STABLE_OVERLAY_DIRS = (
+    "opencode/skills",
+    "opencode/docs",
+    "opencode/porting",
+    "scripts/tests",
+)
+STABLE_OVERLAY_FILES = (
+    "agents/opencode-port-agent.md",
+    "README.md",
+    "INSTALL.md",
+    "bootstrap.sh",
+    ".upstream-sha",
+    "oc-port-agent.json",
+    ".oc-port/.gitignore",
+    ".oc-port/state.json",
+    "opencode/pstack-models.md",
+    "scripts/install-opencode.py",
+    "scripts/opencode-transform.py",
+    "scripts/sync-upstream.sh",
+    "scripts/verify-opencode-port.py",
+)
+
+
+class VerificationError(RuntimeError):
+    pass
+
+
+def load_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        try:
+            label = path.relative_to(ROOT)
+        except ValueError:
+            label = path
+        raise VerificationError(f"cannot read valid JSON from {label}: {error}") from error
+
+
+def canonical_digest(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_schema_copies(root: Path) -> None:
+    directory = root / "opencode/porting"
+    names = (
+        "oc-port-agent.schema.json",
+        "oc-port-policy.schema.json",
+        "porting-instructions.schema.json",
+    )
+    schemas: dict[str, dict[str, Any]] = {}
+    for name in names:
+        schema_path = directory / name
+        schema = load_json(schema_path)
+        if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+            raise VerificationError(f"{name} is not a Draft 2020-12 schema")
+        if hashlib.sha256(schema_path.read_bytes()).hexdigest() != EXPECTED_SCHEMA_SHA256[name]:
+            raise VerificationError(f"{name} differs from its reviewed immutable copy")
+        schemas[name] = schema
+    for name in names[:2]:
+        selection = schemas[name].get("properties", {}).get("selections", {}).get("items", {})
+        reference = selection.get("properties", {}).get("instructions", {}).get("$ref")
+        if reference != "./porting-instructions.schema.json":
+            raise VerificationError(f"{name} must resolve its instruction schema from this directory")
+    if schemas[names[0]].get("title") != "oc-port-agent CLI tracking policy":
+        raise VerificationError("local CLI schema identity changed")
+    if schemas[names[1]].get("title") != "oc-port-agent hosted tracking policy":
+        raise VerificationError("hosted schema identity changed")
+    if schemas[names[2]].get("title") != "Structured porting instructions":
+        raise VerificationError("instruction schema identity changed")
+
+
+def validate_scope(root: Path = ROOT) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    validate_schema_copies(root)
+    hosted = load_json(root / "opencode/porting/policy.json")
+    registration = load_json(root / "opencode/porting/registration.template.json")
+    local_path = root / "oc-port-agent.json"
+    local = load_json(local_path) if local_path.is_file() else None
+    if hosted.get("$schema") != EXPECTED_POLICY_SCHEMA or hosted.get("limits") != HOSTED_LIMITS:
+        raise VerificationError("hosted policy schema reference or limits changed")
+    if hosted.get("version") != 1 or hosted.get("upstream") != UPSTREAM:
+        raise VerificationError("hosted policy upstream/revision scope changed")
+    if len(hosted.get("selections", [])) != 1:
+        raise VerificationError("pstack must remain one combined selection")
+    selection = hosted["selections"][0]
+    if selection.get("id") != SELECTION_ID:
+        raise VerificationError("selection ID changed")
+    if selection.get("upstreamPaths") != UPSTREAM_PATHS:
+        raise VerificationError("selected upstream context changed")
+    if selection.get("excludeUpstreamPaths") != EXCLUDED_UPSTREAM_PATHS:
+        raise VerificationError("upstream exclusions changed")
+    if selection.get("targetPaths") != TARGET_PATHS:
+        raise VerificationError("agent target edit allowlist changed")
+    if canonical_digest(selection) != EXPECTED_SELECTION_SHA256:
+        raise VerificationError("reviewed selection instructions, mappings, or acceptance changed")
+    if selection.get("protectedPaths") is not None:
+        raise VerificationError("protected paths belong at policy level, not inside a selection")
+    if selection.get("instructions", {}).get("goal", "").count("Cursor pstack") != 1:
+        raise VerificationError("structured instructions no longer state the Cursor pstack goal")
+    if not all(word in " ".join(selection.get("instructions", {}).get("adaptation", [])).lower()
+               for word in ("subagent", "question", "sessionid", "blocked", "manual")):
+        raise VerificationError("structured instructions lost a required OpenCode V2 mapping or blocker")
+
+    policies = [("hosted", hosted)]
+    if local is not None:
+        if local.get("$schema") != EXPECTED_AGENT_SCHEMA:
+            raise VerificationError("CLI policy must use the checked-in local schema")
+        if local.get("version") != 1 or local.get("upstream") != UPSTREAM:
+            raise VerificationError("CLI policy upstream/revision scope changed")
+        if len(local.get("selections", [])) != 1:
+            raise VerificationError("CLI policy must remain one combined selection")
+        if local.get("opencode") != CLI_MODEL_SETTINGS or local.get("limits") != CLI_LIMITS:
+            raise VerificationError("local runner model, attempts, steps, timeout, or context bound changed")
+        policies.insert(0, ("CLI", local))
+
+    for policy_name, policy in policies:
+        if policy.get("version") != 1 or policy.get("upstream") != UPSTREAM:
+            raise VerificationError(f"{policy_name} policy upstream changed")
+        if policy.get("protectedPaths") != PROTECTED_PATHS:
+            raise VerificationError(f"{policy_name} protected path set changed")
+        if policy.get("preserve") != PRESERVE:
+            raise VerificationError(f"{policy_name} preservation rules changed")
+        if policy.get("verification") != VERIFICATION:
+            raise VerificationError(f"{policy_name} verification commands changed")
+        if len(policy.get("selections", [])) != 1 or canonical_digest(policy["selections"][0]) != canonical_digest(selection):
+            raise VerificationError(f"{policy_name} selection differs from the reviewed combined selection")
+
+    if "opencode" in hosted:
+        raise VerificationError("hosted policy must not contain CLI executable/model settings")
+
+    if local is not None:
+        shared_local = {key: value for key, value in local.items() if key not in {"$schema", "opencode", "limits"}}
+        shared_hosted = {key: value for key, value in hosted.items() if key not in {"$schema", "limits"}}
+        if shared_local != shared_hosted:
+            raise VerificationError("hosted policy is not the same reviewed scope as the CLI policy")
+
+    if set(registration) != {"installationId", "target", "baseBranch", "upstream", "policy"}:
+        raise VerificationError("registration template does not match the hosted registration API shape")
+    if registration.get("installationId") != 170044765:
+        raise VerificationError("registration template installation metadata changed")
+    if registration.get("target") != {"owner": "kyeshmz", "name": "opencode-pstack"}:
+        raise VerificationError("registration template target changed")
+    if registration.get("baseBranch") != "main":
+        raise VerificationError("registration template base branch changed")
+    if registration.get("upstream") != {**UPSTREAM, "baselineCommit": BASELINE}:
+        raise VerificationError("registration template source baseline changed")
+    if registration.get("policy") != hosted:
+        raise VerificationError("registration template policy is not the reviewed hosted policy")
+
+    ignore_path = root / ".oc-port/.gitignore"
+    if ignore_path.exists():
+        try:
+            ignore_entries = {line.strip() for line in ignore_path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.lstrip().startswith("#")}
+        except OSError as error:
+            raise VerificationError("cannot read .oc-port ignore rules") from error
+        if not IGNORE_ENTRIES.issubset(ignore_entries) or any("state" in item or "reports" in item for item in ignore_entries):
+            raise VerificationError(".oc-port ignore rules must hide local artifacts but retain state and reports")
+    elif (root / ".oc-port").exists():
+        raise VerificationError("missing .oc-port ignore rules")
+
+    sync_script = (root / "scripts/sync-upstream.sh").read_text(encoding="utf-8")
+    for required in (
+        "--exclude='/oc-port-agent.json'",
+        "--exclude='/.oc-port/'",
+        "--exclude='bootstrap.sh'",
+        "--exclude='README.md'",
+        "--exclude='AGENTS.md'",
+        "GITHUB_ACTIONS",
+        "github-actions[bot]",
+        "-c user.name=",
+        "PSTACK_SYNC_TEST_FIXTURE",
+    ):
+        if required not in sync_script:
+            raise VerificationError(f"sync persistence contract missing {required}")
+    if "git config --global" in sync_script:
+        raise VerificationError("sync script must not change global Git configuration")
+
+    return local, hosted
+
+
+def validate_checkpoint(root: Path = ROOT, plan: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    state = load_json(root / ".oc-port/state.json")
+    if not isinstance(state, dict) or set(state) != {"version", "upstream", "policyHash", "lastSyncedCommit"}:
+        raise VerificationError("oc-port checkpoint shape is invalid")
+    if state.get("version") != 1 or state.get("upstream") != UPSTREAM:
+        raise VerificationError("oc-port checkpoint does not match the configured source")
+    if state.get("policyHash") != TRACKING_POLICY_HASH:
+        raise VerificationError("checkpoint policy hash does not match the reviewed tracking policy")
+    checkpoint = state.get("lastSyncedCommit")
+    if not isinstance(checkpoint, str) or not HEX_COMMIT.fullmatch(checkpoint):
+        raise VerificationError("checkpoint commit is malformed")
+    if plan and plan.get("fromCommit") is not None and checkpoint != plan["fromCommit"]:
+        raise VerificationError("checkpoint does not match the immutable plan's starting commit")
+    return state
+
+
+def plan_metadata(root: Path, environ: Mapping[str, str], required: bool) -> dict[str, Any] | None:
+    packet_path = root / ".oc-port/context/packet.json"
+    packet_exists = packet_path.exists()
+    packet_info: dict[str, Any] | None = None
+    if packet_exists:
+        packet = load_json(packet_path)
+        plan = packet.get("plan") if isinstance(packet, dict) else None
+        upstream = packet.get("upstream") if isinstance(packet, dict) else None
+        if not isinstance(plan, dict) or not isinstance(upstream, dict) or upstream != UPSTREAM:
+            raise VerificationError("CLI packet source metadata is malformed or mismatched")
+        from_commit = plan.get("from")
+        commit = plan.get("to")
+        selections = plan.get("selections")
+        if (not isinstance(from_commit, str) or not HEX_COMMIT.fullmatch(from_commit)
+                or not isinstance(commit, str) or not HEX_COMMIT.fullmatch(commit)
+                or not isinstance(selections, list)):
+            raise VerificationError("CLI packet plan pin or selection list is malformed")
+        if any(not isinstance(item, dict) or item.get("id") != SELECTION_ID for item in selections):
+            raise VerificationError("CLI packet contains an unknown selection")
+        packet_info = {
+            "upstreamCommit": commit,
+            "fromCommit": from_commit,
+            "targetCommit": None,
+            "hasSelections": bool(selections),
+        }
+
+    env_keys = ("OC_PORT_UPSTREAM_COMMIT", "OC_PORT_TARGET_COMMIT", "OC_PORT_HAS_SELECTIONS")
+    present = [key in environ for key in env_keys]
+    env_info: dict[str, Any] | None = None
+    if any(present):
+        if not all(present):
+            raise VerificationError("trusted Worker plan metadata is incomplete")
+        upstream_commit = environ[env_keys[0]]
+        target_commit = environ[env_keys[1]]
+        has_selections = environ[env_keys[2]]
+        if not HEX_COMMIT.fullmatch(upstream_commit) or not HEX_COMMIT.fullmatch(target_commit):
+            raise VerificationError("trusted Worker commit pins must be complete hexadecimal commits")
+        if has_selections not in {"true", "false"}:
+            raise VerificationError("trusted Worker selection pin must be true or false")
+        env_info = {
+            "upstreamCommit": upstream_commit,
+            "fromCommit": None,
+            "targetCommit": target_commit,
+            "hasSelections": has_selections == "true",
+        }
+
+    if packet_info is not None and env_info is not None:
+        if (packet_info["upstreamCommit"] != env_info["upstreamCommit"]
+                or packet_info["hasSelections"] != env_info["hasSelections"]):
+            raise VerificationError("CLI packet and trusted Worker plan pins disagree")
+    info = packet_info or env_info
+    if packet_info is not None and env_info is not None:
+        info = {**packet_info, "targetCommit": env_info["targetCommit"]}
+    if required and info is None:
+        raise VerificationError("--require-plan needs a CLI packet or trusted Worker plan environment")
+    if info and info["hasSelections"]:
+        try:
+            mirror_sha = (root / ".upstream-sha").read_text(encoding="ascii").strip()
+        except OSError as error:
+            raise VerificationError("selected source plan requires .upstream-sha") from error
+        if not HEX_COMMIT.fullmatch(mirror_sha) or mirror_sha != info["upstreamCommit"]:
+            raise VerificationError(
+                f"selected source plan is pinned to {info['upstreamCommit']}, but .upstream-sha is {mirror_sha or 'missing'}; mirror first"
+            )
+    return info
+
+
+def source_manifest(root: Path = ROOT) -> dict[str, tuple[str, int]]:
+    result: dict[str, tuple[str, int]] = {}
+    paths = [root / name for name in RAW_FILES]
+    for directory_name in (*RAW_DIRS, *STABLE_OVERLAY_DIRS):
+        directory = root / directory_name
+        if directory.exists():
+            for current, dirnames, filenames in os.walk(directory, followlinks=False):
+                current_path = Path(current)
+                for dirname in list(dirnames):
+                    candidate = current_path / dirname
+                    if candidate.is_symlink():
+                        filenames.append(dirname)
+                        dirnames.remove(dirname)
+                paths.extend(current_path / name for name in filenames)
+    paths.extend(root / name for name in STABLE_OVERLAY_FILES if (root / name).exists())
+    for path in paths:
+        if not path.exists() and not path.is_symlink():
+            raise VerificationError(f"upstream-owned source file is missing: {path.relative_to(root)}")
+        relative = path.relative_to(root).as_posix()
+        mode = path.lstat().st_mode
+        if path.is_symlink():
+            contents = os.readlink(path).encode("utf-8")
+            kind = 0o120000
+        else:
+            if not path.is_file():
+                raise VerificationError(f"unexpected non-file source entry: {relative}")
+            contents = path.read_bytes()
+            kind = 0o100755 if mode & 0o111 else 0o100644
+        result[relative] = (hashlib.sha256(contents).hexdigest(), kind)
+    if not result:
+        raise VerificationError("no upstream-owned source files were found")
+    return dict(sorted(result.items()))
+
+
+def assert_source_unchanged(before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
+    if before != after:
+        changed = sorted(set(before) | set(after))
+        changed = [path for path in changed if before.get(path) != after.get(path)]
+        raise VerificationError("installer changed protected source/overlay hashes: " + ", ".join(changed[:12]))
+
+
+def isolated_environment(home: Path, temp_root: Path) -> dict[str, str]:
+    paths = [str(Path(sys.executable).resolve().parent), "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"]
+    path_value = os.pathsep.join(dict.fromkeys(paths))
+    return {
+        "PATH": path_value,
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(home / "xdg config"),
+        "TMPDIR": str(temp_root),
+        "LANG": "C",
+        "LC_ALL": "C",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+    }
+
+
+def prepare_isolated_home(home: Path) -> dict[str, Any]:
+    xdg = home / "xdg config"
+    config_dir = (xdg / "opencode").resolve()
+    config_dir.mkdir(parents=True)
+    (config_dir / "skills/unrelated-user").mkdir(parents=True)
+    (config_dir / "agents").mkdir(parents=True)
+    (config_dir / "commands").mkdir(parents=True)
+    (config_dir / "skills/unrelated-user/SKILL.md").write_text(
+        "---\nname: unrelated-user\ndescription: User-owned skill fixture.\n---\nKeep this file.\n",
+        encoding="utf-8",
+    )
+    (config_dir / "agents/user-agent.md").write_text("User-owned agent sentinel.\n", encoding="utf-8")
+    (config_dir / "commands/setup-pstack.md").write_text("User-owned command collision.\n", encoding="utf-8")
+    (config_dir / "commands/user-command.md").write_text("User-owned command.\n", encoding="utf-8")
+    (config_dir / "commands/removed-pstack-skill.md").write_text(MARKER + "\nStale pstack command.\n", encoding="utf-8")
+    (config_dir / "commands/removed-pstack-skill.md").write_text(MARKER + "\nStale generated wrapper.\n", encoding="utf-8")
+    model_choices = (
+        "# User-selected pstack role choices\n"
+        "feature, refactoring: custom/confirmed-model\n"
+        "swarm workers: inherit-parent\n"
+    ).encode("utf-8")
+    (config_dir / "instructions").mkdir()
+    (config_dir / "instructions/pstack-models.md").write_bytes(model_choices)
+    existing_agents = "# User guidance\nKeep the project-specific editor instructions.\n"
+    (config_dir / "AGENTS.md").write_text(existing_agents, encoding="utf-8")
+    opencode_json = (
+        '{\n  "model": "user/custom-model",\n  "provider": "user-provider",\n'
+        '  "user_config_sentinel": {"enabled": true, "label": "keep-config"}\n}\n'
+    ).encode("utf-8")
+    opencode_jsonc = '{\n // user comments remain intact\n "model": "user/jsonc-model",\n}\n'.encode("utf-8")
+    (config_dir / "opencode.json").write_bytes(opencode_json)
+    (config_dir / "opencode.jsonc").write_bytes(opencode_jsonc)
+    return {
+        "config_dir": config_dir,
+        "model_choices": model_choices,
+        "existing_agents": existing_agents,
+        "opencode_json": opencode_json,
+        "opencode_jsonc": opencode_jsonc,
+    }
+
+
+def tree_manifest(root: Path) -> dict[str, tuple[str, int]]:
+    result: dict[str, tuple[str, int]] = {}
+    if not root.exists():
+        return result
+    for current, _directories, filenames in os.walk(root, followlinks=False):
+        for filename in filenames:
+            path = Path(current) / filename
+            relative = path.relative_to(root).as_posix()
+            mode = path.lstat().st_mode
+            if path.is_symlink():
+                contents = os.readlink(path).encode("utf-8")
+                kind = 0o120000
+            else:
+                contents = path.read_bytes()
+                kind = 0o100755 if mode & 0o111 else 0o100644
+            result[relative] = (hashlib.sha256(contents).hexdigest(), kind)
+    return dict(sorted(result.items()))
+
+
+def run_install(root: Path, home: Path, temp_root: Path) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash", path=isolated_environment(home, temp_root)["PATH"])
+    if bash is None:
+        raise VerificationError("bash is required to verify the existing installer")
+    try:
+        result = subprocess.run(
+            [bash, "install.sh", "--opencode"],
+            cwd=root,
+            env=isolated_environment(home, temp_root),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=180,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise VerificationError(f"isolated installer execution failed: {error}") from error
+    if result.returncode != 0:
+        detail = (result.stdout + "\n" + result.stderr)[-5000:]
+        raise VerificationError(f"install.sh --opencode exited {result.returncode}:\n{detail}")
+    if not re.search(r"all \d+ md rules \+ audit\.sh blocks applied", result.stdout):
+        raise VerificationError("installer did not report that every strict transform rule applied")
+    return result
+
+
+def frontmatter(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    match = re.match(r"\A---\n(.*?)\n---", text, re.DOTALL)
+    if not match:
+        raise VerificationError(f"missing frontmatter in installed {path}")
+    return match.group(1)
+
+
+def verify_installed_output(root: Path, home: Path, sentinels: dict[str, Any]) -> tuple[int, int, int]:
+    opencode = sentinels["config_dir"]
+    source_skill_files = sorted((root / "skills").rglob("SKILL.md"))
+    source_agents = sorted(path for path in (root / "agents").glob("*.md") if path.name != "opencode-port-agent.md")
+    if not source_skill_files or not source_agents:
+        raise VerificationError("expected upstream skills and flat agent source files")
+
+    manual_only_count = 0
+    skill_ids: list[str] = []
+    for source_file in source_skill_files:
+        relative = source_file.relative_to(root / "skills")
+        slug = source_file.parent.name
+        skill_ids.append(slug)
+        installed_file = opencode / "skills" / relative
+        fm = frontmatter(installed_file)
+        if not SKILL_NAME.fullmatch(slug) or not re.search(r"^name:\s*['\"]?" + re.escape(slug) + r"['\"]?\s*$", fm, re.MULTILINE):
+            raise VerificationError(f"skill name was not normalized to directory slug {slug}")
+        if re.search(r"^\s*opencode/(?:slash|autoinvoke):", fm, re.MULTILINE):
+            raise VerificationError(f"installer injected speculative OpenCode metadata: {slug}")
+        source_text = source_file.read_text(encoding="utf-8")
+        installed_text = installed_file.read_text(encoding="utf-8")
+        if re.search(r"~/?\.cursor/", installed_text):
+            raise VerificationError(f"default OpenCode skill retains a Cursor home path: {slug}")
+        if MANUAL_ONLY.search(source_text):
+            manual_only_count += 1
+            if not MANUAL_ONLY.search(fm):
+                raise VerificationError(f"native manual-only intent was not preserved: {slug}")
+        elif MANUAL_ONLY.search(fm):
+            raise VerificationError(f"manual-only invocation was disabled without source intent: {slug}")
+    if len(skill_ids) != len(set(skill_ids)):
+        raise VerificationError("source skills contain duplicate OpenCode directory IDs")
+    if manual_only_count < 1 or not MANUAL_ONLY.search((opencode / "skills/poteto-mode/SKILL.md").read_text(encoding="utf-8")):
+        raise VerificationError("expected pstack manual-only skill intent is missing")
+
+    for source in source_agents:
+        installed_agent = opencode / "agents" / source.name
+        if not installed_agent.is_file():
+            raise VerificationError(f"agent was not installed flat: {source.name}")
+        if not re.search(r"^mode:\s*subagent\s*$", frontmatter(installed_agent), re.MULTILINE):
+            raise VerificationError(f"agent is not registered as an OpenCode subagent: {source.stem}")
+    if (opencode / "agents/pstack").exists():
+        raise VerificationError("legacy nested pstack agent directory remains")
+    if (opencode / "agents/opencode-port-agent.md").exists():
+        raise VerificationError("repository port-agent overlay was installed as a global agent")
+    if not (opencode / "agents/poteto-agent.md").is_file() or not (opencode / "agents/comment-sicko.md").is_file():
+        raise VerificationError("flat agent IDs referenced by pstack are missing")
+
+    command_dir = opencode / "commands"
+    custom_collision = command_dir / "setup-pstack.md"
+    if custom_collision.read_text(encoding="utf-8") != "User-owned command collision.\n":
+        raise VerificationError("installer replaced an unmarked custom command")
+    if (command_dir / "user-command.md").read_text(encoding="utf-8") != "User-owned command.\n":
+        raise VerificationError("installer changed an unrelated custom command")
+    wrappers = 0
+    for slug in skill_ids:
+        command = command_dir / f"{slug}.md"
+        if slug == "setup-pstack":
+            continue
+        if not command.is_file():
+            raise VerificationError(f"missing slash command wrapper for {slug}")
+        content = command.read_text(encoding="utf-8")
+        if MARKER not in content or f'id: "{slug}"' not in content or "$ARGUMENTS" not in content:
+            raise VerificationError(f"invalid generated command wrapper for {slug}")
+        wrappers += 1
+    if any(MARKER in path.read_text(encoding="utf-8") for path in command_dir.glob("*.md") if path.stem not in set(skill_ids)):
+        raise VerificationError("an unrelated command acquired a generated pstack wrapper")
+    if (command_dir / "removed-pstack-skill.md").exists():
+        raise VerificationError("stale marked pstack command was not pruned")
+
+    poteto = (opencode / "skills/poteto-mode/SKILL.md").read_text(encoding="utf-8")
+    automate = (opencode / "skills/automate-me/SKILL.md").read_text(encoding="utf-8")
+    reflect = (opencode / "skills/reflect/SKILL.md").read_text(encoding="utf-8")
+    if 'agent: "poteto-agent"' not in poteto or '`subagent` call' not in poteto or "background: true" not in poteto:
+        raise VerificationError("subagent tool parameters or flat pstack agent ID were not transformed")
+    if "question` tool" not in automate or "multiple: true" not in automate:
+        raise VerificationError("question tool name or multiple-choice parameter was not transformed")
+    if "opencode session list --format json" not in reflect or "opencode session export" not in reflect:
+        raise VerificationError("session lookup did not use the OpenCode CLI adaptation")
+
+    model_file = opencode / "instructions/pstack-models.md"
+    if model_file.read_bytes() != sentinels["model_choices"]:
+        raise VerificationError("installer replaced user-owned role model choices")
+    if "inherit-parent" not in (root / "opencode/pstack-models.md").read_text(encoding="utf-8"):
+        raise VerificationError("fresh role-model defaults no longer inherit the parent")
+
+    agents_file = opencode / "AGENTS.md"
+    agents_text = agents_file.read_text(encoding="utf-8")
+    if not agents_text.startswith(sentinels["existing_agents"]):
+        raise VerificationError("installer replaced user-owned AGENTS.md guidance")
+    if agents_text.count(AGENTS_START) != 1 or agents_text.count(AGENTS_END) != 1:
+        raise VerificationError("managed pstack AGENTS block is missing or duplicated")
+    if str(model_file) not in agents_text:
+        raise VerificationError("managed AGENTS block does not direct skills to the user model file")
+    if (opencode / "AGENTS.md.bak-pstack").read_text(encoding="utf-8") != sentinels["existing_agents"]:
+        raise VerificationError("installer did not preserve the AGENTS.md preimage")
+    backup_root = opencode.parent / "opencode-pstack-backups" / opencode.name
+    agent_backups = list(backup_root.glob("*/AGENTS.md"))
+    if len(agent_backups) != 1 or agent_backups[0].read_text(encoding="utf-8") != sentinels["existing_agents"]:
+        raise VerificationError("timestamped rollback backup does not preserve the changed AGENTS.md")
+
+    if (opencode / "opencode.json").read_bytes() != sentinels["opencode_json"]:
+        raise VerificationError("installer modified opencode.json")
+    if (opencode / "opencode.jsonc").read_bytes() != sentinels["opencode_jsonc"]:
+        raise VerificationError("installer modified opencode.jsonc")
+    if (opencode / "opencode.json.bak-pstack").exists() or (opencode / "opencode.jsonc.bak-pstack").exists():
+        raise VerificationError("installer created an OpenCode config backup despite not changing the config")
+    if (home / ".cursor").exists() or (home / ".config").exists():
+        raise VerificationError("default OpenCode installation created a non-XDG or Cursor home path")
+
+    make_bot_ui = (opencode / "skills/make-bot-ui/SKILL.md").read_text(encoding="utf-8")
+    setup = (opencode / "skills/setup-pstack/SKILL.md").read_text(encoding="utf-8")
+    if "# Make a bot UI in OpenCode" not in make_bot_ui or "Do not call `update_state` or `SendToUser`" not in make_bot_ui:
+        raise VerificationError("native OpenCode make-bot-ui overlay was not installed")
+    if "{{CONFIG_DIR}}" in setup or str(model_file) not in setup or "inherit-parent" not in setup:
+        raise VerificationError("native setup-pstack overlay does not preserve confirmed XDG model behavior")
+
+    guide_overlays = sorted((root / "opencode/docs").rglob("*.md"))
+    for overlay in guide_overlays:
+        relative = overlay.relative_to(root / "opencode/docs")
+        installed_guide = opencode / "pstack/docs" / relative
+        expected = GUIDE_PREFIX + overlay.read_text(encoding="utf-8").replace("{{CONFIG_DIR}}", str(opencode))
+        if installed_guide.read_text(encoding="utf-8") != expected:
+            raise VerificationError(f"native guide overlay was not installed intact: {relative}")
+    if (opencode / "pstack/README.md").read_bytes() != (root / "INSTALL.md").read_bytes():
+        raise VerificationError("pack guide index does not use the protected INSTALL.md overlay")
+    return len(source_skill_files), len(source_agents), wrappers
+
+
+def verify(root: Path = ROOT, require_plan: bool = False, environ: Mapping[str, str] | None = None) -> str:
+    validate_scope(root)
+    metadata = plan_metadata(root, os.environ if environ is None else environ, require_plan)
+    if (root / ".oc-port/state.json").is_file():
+        validate_checkpoint(root, metadata)
+    elif not (require_plan and metadata is not None and metadata.get("targetCommit") is not None):
+        raise VerificationError("oc-port checkpoint is unavailable outside a trusted hosted plan")
+    before_sources = source_manifest(root)
+
+    with tempfile.TemporaryDirectory(prefix="oc-port-verify-") as temporary:
+        temp_root = Path(temporary)
+        home = temp_root / "home"
+        home.mkdir()
+        sentinels = prepare_isolated_home(home)
+        first = run_install(root, home, temp_root)
+        first_snapshot = tree_manifest(sentinels["config_dir"])
+        skill_count, agent_count, wrapper_count = verify_installed_output(root, home, sentinels)
+        second = run_install(root, home, temp_root)
+        second_snapshot = tree_manifest(sentinels["config_dir"])
+        if first_snapshot != second_snapshot:
+            raise VerificationError("repeated installer run was not idempotent")
+        if "all " not in first.stdout or "all " not in second.stdout:
+            raise VerificationError("strict transform result was not reported on both installer runs")
+
+    after_sources = source_manifest(root)
+    assert_source_unchanged(before_sources, after_sources)
+    pin = "un-pinned manual baseline" if metadata is None else f"plan {metadata['upstreamCommit']} (selected={metadata['hasSelections']})"
+    return (
+        f"verified isolated OpenCode install twice: {skill_count} skills, {agent_count} flat agents, "
+        f"{wrapper_count} generated wrappers; {len(before_sources)} protected source/overlay hashes unchanged; {pin}"
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--require-plan", action="store_true", help="require a CLI packet or trusted Worker plan pins")
+    args = parser.parse_args()
+    try:
+        print(verify(require_plan=args.require_plan))
+    except VerificationError as error:
+        print(f"verification blocked: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

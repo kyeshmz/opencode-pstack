@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "upstream": {
+    "repository": "https://github.com/cursor/plugins.git",
+    "ref": "main"
+  },
+  "policyHash": "54a24fc368ab6359852544853451e4af50a18d3d10c7806bf85cd2ef018561f6",
+  "lastSyncedCommit": "ccb5507cec1546dc88135c1139c811e6c59115ba"
+}
