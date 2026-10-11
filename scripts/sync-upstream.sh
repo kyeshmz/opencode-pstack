@@ -30,7 +30,9 @@ rsync -a --delete \
   --exclude='opencode/' \
   --exclude='.claude-plugin/' \
   --exclude='install.sh' \
+  --exclude='bootstrap.sh' \
   --exclude='INSTALL.md' \
+  --exclude='AGENTS.md' \
   --exclude='.upstream-sha' \
   --exclude='agents/opencode-port-agent.md' \
   "$SRC/" "$ROOT/"

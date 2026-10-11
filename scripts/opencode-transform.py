@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install-time OpenCode conversion for pstack skills/agents.
 
-Usage: opencode-transform.py <installed-skills-dir> <installed-agents-dir>
+Usage: opencode-transform.py <source-skills> <installed-skills> <source-agents> <installed-agents>
 
 Repo files stay pristine (upstream-owned, overwritten on every sync). This
 rewrites the INSTALLED copies: Cursor tool names/params become OpenCode ones
@@ -15,21 +15,22 @@ Each rule asserts its expected hit count and the script exits 1 on mismatch,
 so an upstream rewording fails loudly instead of half-applying. Idempotent:
 install.sh re-copies from the repo before running this.
 
-Deliberately NOT converted (see INSTALL.md):
-- `~/.cursor/rules/pstack-models.mdc`: the installer mirrors that path, and
-  `setup-pstack` writes it, so it works on disk on any host.
-- Model slugs (`claude-opus-5-5-xhigh`, ...): overridden by the installed
-  rule; the rejection-fallback prose still applies.
-- `make-bot-ui` (Cursor webhook platform), `origin`/`gh`/Bugbot forge refs.
+Deliberately NOT converted (see INSTALL.md): `origin`/`gh`/Bugbot forge refs.
+Platform-only skills use native overlays. Unconfigured model defaults inherit
+the parent instead of forwarding Cursor-specific model slugs.
 """
 
 import os
 import sys
+import re
+from pathlib import Path
 
 REPO_SKILLS = sys.argv[1]
 INSTALLED_SKILLS = sys.argv[2]
 REPO_AGENTS = sys.argv[3]
 INSTALLED_AGENTS = sys.argv[4]
+CONFIG_DIR = Path(os.environ.get('PSTACK_OPENCODE_CONFIG_DIR', Path(INSTALLED_SKILLS).parent)).resolve()
+OVERLAYS = Path(__file__).resolve().parent.parent / 'opencode'
 
 # Overlay-owned: never rewritten (this file documents the raw Cursor strings
 # the rules match on, so rewriting it would corrupt the doc).
@@ -43,7 +44,7 @@ RULES = [
     (None, '`subagent_type: "poteto-agent"`', '`agent: "poteto-agent"`', 3),
     (None, '`subagent_type: "Comment Sicko"`', '`agent: "comment-sicko"`', 1),
     (None, 'Substituting `generalPurpose`', 'Substituting `general`', 1),
-    (None, 'the Task tool', 'the `subagent` tool', 9),
+    (None, 'the Task tool', 'the `subagent` tool', 6),
     (None, 'one Task subagent', 'one subagent', 2),
     (None, 'Spawn `Task` with', 'Spawn a `subagent` with', 1),
     (None, 'Defaults for every `Task` call', 'Defaults for every `subagent` call', 1),
@@ -386,7 +387,7 @@ Export the current session to a file the reviewers can read. Find its ID with `o
      1),
     ('poteto-mode/playbooks/worktree-cleanup.md',
      '`~/Library/Application Support/Cursor` (`state.vscdb.backup`, and `snapshots/roots/<root>` where a `<root>` named for a folder you opened as a workspace balloons)',
-     '`~/.local/share/opencode` (the session database, snapshots, and logs, which grow with use)',
+      'OpenCode\'s cache directory (resolve with `opencode debug paths cache`; never delete its session database, data directory, or service configuration)',
      1),
     ('poteto-mode/playbooks/orchestrate.md',
      'a nested spawn has the full Task schema including `environment`',
@@ -428,6 +429,18 @@ Export the current session to a file the reviewers can read. Find its ID with `o
      '.cursor/skills/verify-', '.opencode/skills/verify-', 1),
     # ---- check-plan marker must match the rewritten tick wording ----
     ('poteto-mode/scripts/check-plan.mjs', '"/loop 1h"', '"hourly audit tick"', 1),
+    ('poteto-mode/playbooks/multi-phase-plan.md',
+     "Unless the operator names a path, write the file under the agent store's `docs/`.",
+     "Use the host-provided plan path if one is available. Otherwise, unless the user names a path, write `<target-repository>/docs/plans/<task-slug>.md`. Never put project plans in the global skill installation.", 1),
+    ('poteto-mode/playbooks/orchestrate.md',
+     "Create `orchestrate/<project-slug>/` in the current agent's store (path in the system prompt).",
+     "Create the run store at `<target-repository>/.opencode/pstack/runs/<run-id>/orchestrate/<project-slug>/`. Use an absolute path in worker briefs; it is project-local working state, not the OpenCode session database or global skill directory.", 1),
+    ('arena/SKILL.md',
+     "If the Task tool rejects a configured entry, run that seat on its family's default and say so. Families go by prefix: `claude-*` and `grok-*`. With no family match, use `claude-opus-5-5-xhigh`. If it rejects a default, use the closest valid slug of the same family from its error message.",
+     "If a configured model is unavailable, omit `model` for that seat and report the fallback. Do not guess another model ID.", 1),
+    ('interrogate/SKILL.md',
+     "If the Task tool rejects a configured entry, run that reviewer on the table default of its family and say so. Families go by prefix: `claude-*` and `grok-*`. With no family match, use Reviewer A's default. If it rejects a table default, check the valid slugs in the Task tool's error message, pick the closest equivalent (prefer the same family and reasoning tier), spawn with it, and open a separate PR to update the default table. Do not block the review on the slug issue. Never treat an alias entry as a rejected slug or apply either fallback to it.",
+     "If a configured model is unavailable, omit `model` for that reviewer and report the fallback. Never pass an alias as a model ID, guess an ID, or open a model-configuration PR without the user's request.", 1),
 ]
 
 
@@ -532,6 +545,66 @@ def main():
         for f in failures:
             print(f'  - {f}')
         sys.exit(1)
+
+    # Path conversion is deliberately tree-wide, not an enumerated list of
+    # authoring skills: new upstream skills must not write into Cursor either.
+    for p in md_files():
+        txt = Path(p).read_text()
+        txt = txt.replace('~/.cursor/rules/pstack-models.mdc', str(CONFIG_DIR / 'instructions/pstack-models.md'))
+        txt = txt.replace('pstack-models.mdc', 'pstack-models.md')
+        txt = txt.replace('~/.cursor/skills/', str(CONFIG_DIR / 'skills') + '/')
+        txt = txt.replace('~/.config/opencode/skills/', str(CONFIG_DIR / 'skills') + '/')
+        txt = txt.replace('.cursor/skills/', '.opencode/skills/')
+        txt = txt.replace('../../docs/', '../../pstack/docs/')
+        txt = txt.replace('../../README.md', '../../pstack/README.md')
+        txt = txt.replace('/tmp/', '$TMPDIR/')
+        txt = txt.replace('https://opencode.ai/docs/', 'https://opencode.ai/v2/docs/')
+        txt = txt.replace('`Task`', '`subagent`')
+        txt = txt.replace('omit Task `model`', 'omit subagent `model`')
+        txt = txt.replace('`subagent_type: generalPurpose`', '`agent: general`')
+        txt = txt.replace('claude-opus-5-5-xhigh', 'inherit-parent')
+        txt = txt.replace('grok-4.7-xhigh-fast', 'inherit-parent')
+        txt = txt.replace(
+            'If the `subagent` tool rejects a slug, use the default and say so. If it rejects the default, use the closest valid slug of the same family from its error message.',
+            'If a configured model is unavailable, omit `model` and report the fallback; do not guess another model ID.',
+        )
+        # Retain support files relative to the loaded skill, but never write
+        # generated project files into the global skill installation.
+        if Path(p).name == 'SKILL.md':
+            overlay = OVERLAYS / 'skills' / Path(p).parent.name / 'SKILL.md'
+            if overlay.is_file():
+                txt = overlay.read_text().replace('{{CONFIG_DIR}}', str(CONFIG_DIR))
+            end = re.match(r'\A---\n.*?\n---\n', txt, re.S)
+            if not end:
+                raise ValueError(f'{p}: missing skill frontmatter')
+            guidance = (
+                '\n## OpenCode paths and output scope\n\n'
+                'Resolve bundled `scripts/`, `references/`, `assets/`, and sibling-skill links '
+                'from this skill\'s base directory supplied by the `skill` tool, not from the shell working directory. '
+                'Run project commands in the user\'s target repository or assigned worktree. '
+                'Use the host-provided scratch directory (or `mktemp` with `TMPDIR`) for temporary '
+                'exports and evidence; resolve `$TMPDIR` before writing and use a unique run directory.\n\n'
+                'Create new project skills at `<target-repository>/.opencode/skills/<skill-id>/SKILL.md`, '
+                'with supporting files beside that entry. Create personal/global skills only when requested, at '
+                f'`{CONFIG_DIR}/skills/<skill-id>/SKILL.md`. '
+                'Use unique lowercase kebab-case directory IDs and `name`/`description` YAML frontmatter. '
+                'Preserve an existing OpenCode skill\'s location when updating it. Do not create `.cursor/` files. '
+                'When editing the pstack source repository itself, shared pack skills belong in its '
+                '`skills/<skill-id>/` source tree; do not edit installed/generated copies instead.\n\n'
+                f'Read pstack model choices from `{CONFIG_DIR}/instructions/pstack-models.md`. '
+                'That is user configuration, not a project output. Do not change it unless the user asks to configure models. '
+                'Use only confirmed OpenCode `providerID/modelID` identifiers and available `#variant` values '
+                'when the host permits model overrides. For `auto`, `inherit-parent`, a missing role, or an '
+                'unavailable configured model, omit the subagent `model` argument and report any fallback. '
+                'Do not guess model IDs from family names or rejection messages.\n'
+            )
+            txt = txt[:end.end()] + guidance + txt[end.end():]
+        elif Path(p).parent == Path(INSTALLED_AGENTS):
+            txt = re.sub(r'^name:.*$', f'name: {Path(p).stem}', txt, count=1, flags=re.M)
+            txt = re.sub(r'^is_background:.*\n', '', txt, flags=re.M)
+            txt = re.sub(r'^mode:.*\n', '', txt, flags=re.M)
+            txt = txt.replace('---\n', '---\nmode: subagent\n', 1)
+        Path(p).write_text(txt)
     print(f'\nall {len(RULES)} md rules + audit.sh blocks applied')
 
 

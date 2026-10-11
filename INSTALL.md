@@ -1,85 +1,127 @@
-# pstack mirror (Claude + OpenCode installable)
+# pstack for OpenCode
 
-Mirror of [`cursor/plugins`](https://github.com/cursor/plugins) `pstack/` only.
-Upstream source: https://github.com/cursor/plugins/tree/main/pstack
-
-Sync: `.github/workflows/sync-upstream.yml` runs every 6 hours plus manual dispatch.
-It runs `scripts/sync-upstream.sh`, which sparse-checkouts upstream `pstack/`,
-rsyncs it over this repo root (preserving overlay files), and **commits each
-time there is a change** as `chore: sync upstream cursor/plugins@<sha>`.
-
-Last synced upstream SHA: see `.upstream-sha`.
+This repository mirrors [Cursor's upstream pstack](https://github.com/cursor/plugins/tree/main/pstack)
+and converts its skills and agents to native OpenCode instructions during installation.
+Upstream files stay intact; OpenCode-specific overlays survive upstream sync.
 
 ## Install
 
-Skills are Agent Skills format (`skills/*/SKILL.md`), readable by both tools.
+One line, with no permanent checkout required:
 
 ```bash
-git clone <this-repo> pstack
-cd pstack
-./install.sh            # claude + opencode (default)
-./install.sh --all      # claude + opencode + cursor
-./install.sh --claude   # ~/.claude/skills + ~/.claude/agents
-./install.sh --opencode  # ~/.config/opencode/skills + agents + sol model mapping
+curl -fsSL https://raw.githubusercontent.com/kyeshmz/opencode-pstack/main/bootstrap.sh | bash
 ```
 
-### Why the installer rewrites skill names
+Run the same line to update. It clones a temporary checkout, runs the OpenCode
+installer, and removes only that temporary checkout afterward. It installs on
+the machine where the command runs, so paths are generated for that machine.
+You can [review the bootstrap script](https://github.com/kyeshmz/opencode-pstack/blob/main/bootstrap.sh)
+before running it. Git, Python 3, and Bash are required.
 
-OpenCode and Claude Code require each `SKILL.md` frontmatter `name` to match
-`^[a-z0-9]+(-[a-z0-9]+)*$` and equal its directory name. Upstream violates this
-for `poteto-mode` (`name: Poteto Mode`) and `make-bot-ui` (`name: Make Bot UI`),
-so `/poteto-mode` never registers. `install.sh` rewrites the `name:` line to
-the directory slug on install for OpenCode and Claude. Repo files stay pristine
-(upstream-owned, overwritten on every sync). Cursor copies install verbatim.
+Or, from an existing checkout:
 
-### Claude Code (plugin)
-
-This repo ships `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`:
-
-```
-claude plugin marketplace add <github-owner>/<github-repo>
-claude plugin install pstack
+```bash
+./install.sh             # OpenCode only (default)
+./install.sh --opencode  # same as the default
 ```
 
-### OpenCode
+Start a new OpenCode session, run `/setup-pstack` to choose models, then
+`/poteto-mode` for your first task. Fresh installs inherit the parent model.
+Reinstallation preserves existing model choices and unmarked custom commands.
+Before overwriting pack files, it saves their previous versions in a timestamped
+`opencode-pstack-backups/` directory beside the global `opencode/` directory.
+Unrelated skills, credentials, service settings, and session databases are not copied.
 
-OpenCode loads Agent Skills from `~/.config/opencode/skills/` (global) on
-demand via the `skill` tool, and slash commands from
-`~/.config/opencode/commands/` (`<name>.md` -> `/<name>` in the TUI). Skills
-do NOT automatically become slash commands, so `install.sh --opencode` does
-both: it copies normalized skills to `skills/` (plus forward-compat
-`metadata: opencode/slash: "true"` for builds that honor it), and generates
-one thin `commands/<skill>.md` wrapper per skill that loads it via the
-`skill` tool and forwards `$ARGUMENTS`. Generated wrappers carry a marker
-comment; reinstalls only touch marked files, never your own custom commands,
-and prune marked wrappers whose skill is gone. The verify-skill pair gets its
-authored output paths rewritten from `.cursor/skills/verify-...` to
-`.opencode/skills/verify-...` in the installed copies. Agents install flat to
-`~/.config/opencode/agents/` (`poteto-agent.md` -> `@poteto-agent`), and the
-sol model mapping works as below. Then restart the TUI (or `opencode reload`
-plus a new session) and run `/setup-pstack`, then `/poteto-mode`.
+Python 3 and Bash are required. Installation converts and validates a temporary
+copy first, so an upstream conversion mismatch fails before replacing skills.
 
-- `opencode/pstack-models.md` pins every pstack role to `openai/gpt-5.6-sol`
-  (same shape as the `/setup-pstack` rule, so skill bodies resolve verbatim).
-- Installed to `~/.config/opencode/instructions/pstack-models.md` and registered
-  in `opencode.json` `instructions` (backup at `opencode.json.bak-pstack`),
-  plus `~/.cursor/rules/pstack-models.mdc` (the literal path skills read).
+### Where files go
 
-Then run `/setup-pstack`, then `/poteto-mode`.
+The global base is `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`:
 
-## Overlay files (not overwritten by sync)
+| Content | Location under that base |
+| --- | --- |
+| Pack skills and bundled resources | `skills/<skill-id>/SKILL.md` |
+| Subagents | `agents/<agent-id>.md` |
+| Generated slash-command wrappers | `commands/<skill-id>.md` |
+| User-owned per-role model choices | `instructions/pstack-models.md` |
+| Managed persistent path guidance | `AGENTS.md` |
+| Linked guides and installation instructions | `pstack/docs/`, `pstack/README.md` |
 
-- `.claude-plugin/` — Claude Code plugin + marketplace manifests
-- `opencode/` — OpenCode overlays (sol model role mapping)
-- `scripts/sync-upstream.sh` — sync script (holds the overlay rsync excludes)
-- `scripts/opencode-transform.py` — Cursor-to-OpenCode rewrite rules, run by
-  `install.sh --opencode` on the installed copies; each rule asserts its hit
-  count so upstream rewordings fail loudly
-- `agents/opencode-port-agent.md` — the agent that owns this port; has its own
-  rsync exclude because `agents/` is otherwise upstream-owned
-- `.github/workflows/sync-upstream.yml` — auto-sync workflow
-- `install.sh`, `INSTALL.md`, `.upstream-sha`
+OpenCode V2 uses the directory name as the skill ID. The installer normalizes
+frontmatter names for portability; V2 does not require that name to match the ID.
+`disable-model-invocation: true` remains supported for manual-only skills.
+Slash commands are separate from skills, so the installer creates wrappers that
+load the exact skill ID and forward `$ARGUMENTS`. It also handles folded YAML
+descriptions and nested skill directories.
 
-Everything else (`skills/`, `agents/`, `docs/`, `automations/`, `assets/`,
-`.cursor-plugin/`, `README.md`, `LICENSE`, `.gitignore`) is upstream-owned
-and gets overwritten on each sync.
+OpenCode V2 currently does not load the config's `instructions` array. The
+installer instead adds a marked block to global `AGENTS.md` directing pstack
+workflows to read the model configuration. It preserves unrelated instructions
+and backs up the file before changing it. It does not edit `opencode.json(c)`.
+
+An OpenCode install does **not** create or depend on `~/.cursor/`.
+
+## Where newly created files go
+
+Every installed skill includes path and output-scope guidance:
+
+- **Project skills:** `<target-repository>/.opencode/skills/<skill-id>/SKILL.md`.
+  Verification skills, their feature maps, and personal mode skills default here.
+- **Global skills:** `<global-base>/skills/<skill-id>/SKILL.md`, only when requested.
+- **Shared pstack contributions:** `skills/<skill-id>/SKILL.md` in this source checkout.
+- **OpenCode-specific replacements:** `opencode/skills/<skill-id>/SKILL.md` here.
+- **Bundled resources:** relative to the loaded skill's base directory, not the
+  shell's current directory. Run project commands in the target repo/worktree.
+- **Scratch files:** the host's temporary directory, in a unique per-run location.
+
+Existing OpenCode skills retain their location when updated. Global model
+configuration is not a project output and is changed only on request.
+
+## Platform differences
+
+The conversion covers Cursor tool names/parameters, skill paths, session lookup,
+model configuration paths, and workflow references to unavailable built-ins.
+`setup-pstack` uses confirmed OpenCode model IDs and variants. `make-bot-ui`
+requires a user-configured webhook backend rather than inventing Cursor routines
+or secret-request tools.
+
+OpenCode does not provide Cursor Custom Modes, `/loop`, cloud-agent VMs, or the
+`cursor-team-kit` plugin. Use project verification skills, isolated worktrees,
+and host-supported background work instead. Background work is local; do not
+assume it continues when the laptop closes. The copied guides identify upstream
+platform differences; installed skills are authoritative for OpenCode behavior.
+
+The `automations/benny/` pack is an upstream Cursor automation integration, not
+an OpenCode scheduler. The installer does not register or enable those automations.
+
+### Other hosts (explicit compatibility installs)
+
+```bash
+./install.sh --claude  # ~/.claude/skills and ~/.claude/agents
+./install.sh --cursor  # ~/.cursor/skills and ~/.cursor/agents
+./install.sh --all     # all three targets
+```
+
+These compatibility copies retain upstream tool names and platform dependencies;
+only the OpenCode copies receive the OpenCode conversion.
+
+## Upstream sync and validation
+
+`.github/workflows/sync-upstream.yml` runs every six hours and on manual dispatch.
+`scripts/sync-upstream.sh` copies upstream pstack into this checkout and commits
+changes. The last upstream revision is in `.upstream-sha`.
+
+The sync preserves `AGENTS.md`, `INSTALL.md`, `install.sh`, `bootstrap.sh`, `opencode/`, `scripts/`,
+`.github/`, `.claude-plugin/`, and `.upstream-sha`. Conversion rules assert their
+expected match counts so upstream rewordings fail visibly instead of leaving
+partially converted instructions.
+
+Run the sandboxed installation tests with:
+
+```bash
+python3 -m unittest discover -s scripts/tests
+bash -n install.sh
+```
+
+Tests use temporary home/config directories and do not alter your live setup.
