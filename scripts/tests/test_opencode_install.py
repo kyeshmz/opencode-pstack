@@ -71,11 +71,8 @@ class OpenCodeInstallTests(unittest.TestCase):
             self.assertIn('.opencode/skills/', text)
         mode = (self.base / 'skills/automate-me/SKILL.md').read_text()
         self.assertIn(str(self.base / 'skills') + '/<handle>-mode/', mode)
-        plan = (self.base / 'skills/poteto-mode/playbooks/multi-phase-plan.md').read_text()
-        self.assertIn('<target-repository>/docs/plans/<task-slug>.md', plan)
-        orchestration = (self.base / 'skills/poteto-mode/playbooks/orchestrate.md').read_text()
-        self.assertIn('<target-repository>/.opencode/pstack/runs/<run-id>/', orchestration)
-        self.assertNotIn('path in the system prompt', orchestration)
+        # orchestrate.md and the old docs/plans default path were removed upstream.
+        self.assertFalse((self.base / 'skills/poteto-mode/playbooks/orchestrate.md').exists())
 
     def test_native_overlays_and_agent_modes(self):
         self.install()
@@ -163,8 +160,8 @@ class OpenCodeInstallTests(unittest.TestCase):
         for tree in ('skills', 'agents', 'scripts', 'opencode', 'docs'):
             shutil.copytree(ROOT / tree, source / tree, ignore=shutil.ignore_patterns('__pycache__', 'node_modules'))
         shutil.copy2(ROOT / 'INSTALL.md', source / 'INSTALL.md')
-        skill = source / 'skills/reflect/SKILL.md'
-        skill.write_text(skill.read_text().replace('### 1. Locate the active transcript', '### New upstream wording'))
+        skill = source / 'skills/poteto-mode/SKILL.md'
+        skill.write_text(skill.read_text().replace('set their own `subagent_type`', '### New upstream wording'))
         result = subprocess.run([
             sys.executable, str(source / 'scripts/install-opencode.py'), str(source), str(self.base),
         ], capture_output=True, text=True, env=self.environment)
