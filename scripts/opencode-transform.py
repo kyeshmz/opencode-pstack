@@ -37,7 +37,8 @@ OVERLAYS = Path(__file__).resolve().parent.parent / 'opencode'
 SKIP_BASENAMES = {'opencode-port-agent.md'}
 
 # (scope, old, new, expected_hits)
-# scope None = every *.md under both dirs; otherwise a path relative to SKILLS.
+# scope None = every *.md under both dirs; otherwise a path relative to SKILLS,
+# or an agents/<name>.md path resolved under the installed agents directory.
 RULES = [
     (None, '`subagent_type: "poteto-agent"`', '`agent: "poteto-agent"`', 2),
     (None, '`subagent_type: "comment-sicko"`', '`agent: "comment-sicko"`', 1),
@@ -281,6 +282,14 @@ RULES = [
      'Read the whole transcript.',
      'Export this session with `opencode session list --format json` (from the project directory, newest first) and `opencode session export <session-id>`, then read the whole transcript.',
      1),
+    ('agents/poteto-agent.md',
+     'every Task spawn',
+     'every subagent spawn',
+     1),
+    ('agents/poteto-agent.md',
+     'search `~/.cursor/plugins/` for a file whose path ends in `skills/poteto-mode/SKILL.md`. If more than one file matches, use the copy whose `.cursor-plugin/plugin.json` has the highest `version`.',
+     'read `~/.config/opencode/skills/poteto-mode/SKILL.md`.',
+     1),
 ]
 
 
@@ -308,7 +317,10 @@ def main():
         if scope is None:
             targets = list(md_files())
         else:
-            p = os.path.join(INSTALLED_SKILLS, scope)
+            if scope.startswith('agents/'):
+                p = os.path.join(INSTALLED_AGENTS, os.path.basename(scope))
+            else:
+                p = os.path.join(INSTALLED_SKILLS, scope)
             targets = [p] if os.path.isfile(p) else []
             if not targets:
                 failures.append(f'{scope}: file missing')
@@ -404,6 +416,8 @@ def main():
         txt = txt.replace('`Task`', '`subagent`')
         txt = txt.replace('omit Task `model`', 'omit subagent `model`')
         txt = txt.replace('`subagent_type: generalPurpose`', '`agent: general`')
+        # Replace the longer -fast slug first so it does not become inherit-parent-fast.
+        txt = txt.replace('claude-opus-5-5-xhigh-fast', 'inherit-parent')
         txt = txt.replace('claude-opus-5-5-xhigh', 'inherit-parent')
         txt = txt.replace('grok-4.7-xhigh-fast', 'inherit-parent')
         txt = txt.replace(

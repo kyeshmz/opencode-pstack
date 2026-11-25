@@ -85,6 +85,23 @@ class OpenCodeInstallTests(unittest.TestCase):
             self.assertNotIn('is_background:', md.read_text())
         self.assertIn('does not provide Cursor', (self.base / 'skills/make-bot-ui/SKILL.md').read_text())
 
+    def test_installed_agents_have_no_cursor_only_wording(self):
+        self.install()
+        agents = list((self.base / 'agents').glob('*.md'))
+        self.assertTrue(agents)
+        leftover = r'~/?\.cursor/|subagent_type|AskQuestion|every Task spawn|`Task`|inherit-parent-fast'
+        for md in agents:
+            text = md.read_text()
+            self.assertIn('mode: subagent\n', text)
+            self.assertNotIn('is_background:', text)
+            self.assertNotRegex(text, leftover, msg=md.name)
+        poteto = (self.base / 'agents/poteto-agent.md').read_text()
+        self.assertIn('every subagent spawn', poteto)
+        self.assertIn('skills/poteto-mode/SKILL.md', poteto)
+        self.assertNotIn('~/.cursor/plugins/', poteto)
+        self.assertNotIn('.cursor-plugin/plugin.json', poteto)
+        self.assertIn('model: inherit-parent\n', poteto)
+
     def test_model_choices_custom_commands_and_unrelated_files_survive_reinstall(self):
         self.install()
         models = self.base / 'instructions/pstack-models.md'
