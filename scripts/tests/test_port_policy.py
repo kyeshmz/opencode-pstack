@@ -294,6 +294,9 @@ class PortPolicyTests(unittest.TestCase):
                 return {name for name in names if name in {".git", ".plans", ".oc-port", "oc-port-agent.json"}}
 
             shutil.copytree(ROOT, fixture, ignore=ignore)
+            # The hosted worker pins the reviewed baseline; don't inherit a
+            # later auto-synced .upstream-sha from the live checkout.
+            (fixture / ".upstream-sha").write_text(verify.BASELINE + "\n", encoding="ascii")
             worker_env = {
                 "OC_PORT_UPSTREAM_COMMIT": verify.BASELINE,
                 "OC_PORT_TARGET_COMMIT": "b" * 40,
